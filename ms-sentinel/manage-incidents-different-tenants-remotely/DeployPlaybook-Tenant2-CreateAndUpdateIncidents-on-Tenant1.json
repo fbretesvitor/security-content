@@ -1,0 +1,1119 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "metadata": {
+        "title": "Create/Edit incidents remotely. :: To be deployed on the source tenant or tenant 2 ::", 
+        "description": "##",
+        "prerequisites": "Create Managed Identity and App registration",
+        "lastUpdateTime": "2024-01-25T00:00:00.000Z", 
+        "entities": ["Account"], 
+        "tags": ["ManageIncidents"], 
+        "support": {
+            "tier": "community" 
+        },
+        "author": {
+            "name": "FBVitor"
+        }
+    },
+    "parameters": {
+        "PlaybookName": {
+            "defaultValue": "QA_2_CreateOrUpdate-Incidents-remoteTenant",
+            "type": "string"
+        },
+        "AppRegistrationID": {
+            "defaultValue": "<APP-REGISTRATION-AUTH-TENANT1>",
+            "type": "string"
+        },
+        "AppRegistrationSecret": {
+            "defaultValue": "<APP-REGISTRATION-PWD-AUTH-TENANT2>",
+            "type": "securestring"
+        },
+        "ManagedIdentity": {
+            "defaultValue": "<MI-AUTH-TENANT2>",
+            "type": "string"
+        },
+        "Tenant1tenantID": {
+            "defaultValue": "<TENANT-ID>",
+            "type": "string"
+        },
+        "Tenant1SubscriptionID": {
+            "defaultValue": "<SUBSCRIPTION-ID>",
+            "type": "string"
+        },
+        "Tenant1RG": {
+            "defaultValue": "<RESOURCE-GROUP-NAME>",
+            "type": "string"
+        },
+        "Tenant1LAW": {
+            "defaultValue": "<LOG-ANALYTICS-WORKSPACE-NAME>",
+            "type": "string"
+        },
+        "Tenant2SubscriptionID": {
+            "defaultValue": "<TENANT-ID>",
+            "type": "string"
+        },
+        "Tenant2RG": {
+            "defaultValue": "<RESOURCE-GROUP-NAME>",
+            "type": "string"
+        },
+        "Tenant2LAW": {
+            "defaultValue": "<LOG-ANALYTICS-WORKSPACE-NAME>",
+            "type": "string"
+        }
+    },
+    "variables": {
+        "MSSentinelTenant1Conn": "[concat('mssentinel-tenant1-', parameters('PlaybookName'))]",
+        "MSSentinelTenant2Conn": "[concat('mssentinel-tenant2-', parameters('PlaybookName'))]",
+        "LogAnalyticsTenant1Conn": "[concat('loganalytics-tenant1-', parameters('PlaybookName'))]",
+        "LogAnalyticsTenant2Conn": "[concat('loganalytics-tenant2-', parameters('PlaybookName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('MSSentinelTenant2Conn')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('MSSentinelTenant2Conn')]",
+                "customParameterValues": {},
+                "parameterValueType": "Alternative",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                    }
+                }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('MSSentinelTenant1Conn')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('MSSentinelTenant1Conn')]",
+                "customParameterValues": {},
+                "parameterValueType": "",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                },
+                "parameterValues": {
+                    "token:TenantId": "[parameters('Tenant1tenantID')]",
+                    "token:clientId": "[parameters('AppRegistrationID')]",
+                    "token:grantType": "client_credentials",
+                    "token:clientSecret": "[parameters('AppRegistrationSecret')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('LogAnalyticsTenant2Conn')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('LogAnalyticsTenant2Conn')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]",
+                    "type": "Microsoft.Web/locations/managedApis"
+                },
+                "parameterValueSet": {
+                    "name": "managedIdentityAuth",
+                    "values": {}
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('LogAnalyticsTenant1Conn')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('LogAnalyticsTenant1Conn')]",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]"
+                },
+                "parameterValues": {
+                    "token:TenantId": "[parameters('Tenant1tenantID')]",
+                    "token:clientId": "[parameters('AppRegistrationID')]",
+                    "token:grantType": "client_credentials",
+                    "token:clientSecret": "[parameters('AppRegistrationSecret')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('PlaybookName')]",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "LogicAppsCategory": "security",
+                "hidden-SentinelTemplateName": "Manage-incidents-on-remote-tenant",
+                "hidden-SentinelTemplateVersion": "1.0"
+            },
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('ManagedIdentity'))]": {}
+                }            
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('MSSentinelTenant1Conn'))]",
+                "[resourceId('Microsoft.Web/connections', variables('MSSentinelTenant2Conn'))]",
+                "[resourceId('Microsoft.Web/connections', variables('LogAnalyticsTenant1Conn'))]",
+                "[resourceId('Microsoft.Web/connections', variables('LogAnalyticsTenant2Conn'))]"
+                ],
+            "properties": {
+                    "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    
+                    
+                    "actions": {
+                        "Delay": {
+                            "inputs": {
+                                "interval": {
+                                    "count": 1,
+                                    "unit": "Minute"
+                                }
+                            },
+                            "runAfter": {
+                                "Initialize_variable_ControlFlag": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Wait"
+                        },
+                        "Delay_2": {
+                            "inputs": {
+                                "interval": {
+                                    "count": 1,
+                                    "unit": "Minute"
+                                }
+                            },
+                            "runAfter": {
+                                "If_Incident_Already_exists_on_Target_Tenant": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Wait"
+                        },
+                        "Get_incident_(Source_Tenant)": {
+                            "inputs": {
+                                "body": {
+                                    "incidentArmId": "@triggerBody()?['object']?['id']"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel_1']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/Incidents"
+                            },
+                            "runAfter": {},
+                            "type": "ApiConnection"
+                        },
+                        "If_Incident_Already_exists_on_Target_Tenant": {
+                            "actions": {
+                                "Read_Incident_Number_in_Target_Tenant": {
+                                    "actions": {
+                                        "For_each_Target_Tenant_ID": {
+                                            "actions": {
+                                                "Add_comment_to_incident_(V3)": {
+                                                    "inputs": {
+                                                        "body": {
+                                                            "incidentArmId": "@variables('TargetTenantIncidentArmIDFull')",
+                                                            "message": "<p>The incident <strong>has been updated</strong>. The field(s) &nbsp;(<strong></strong><strong>@{body('Parse_JSON_Incident_Updates')?['updatedFields']}</strong><strong></strong>) in the source tenant has changed:<br>\n<br>\nUpdated by: @{body('Parse_JSON_Incident_Updates')?['updatedBy']?['name']} at @{body('Parse_JSON_Incident_Updates')?['updatedTime']}<br>\nAlerts: @{body('Parse_JSON_Incident_Updates')?['alerts']}<br>\nUpdated fields: @{body('Parse_JSON_Incident_Updates')?['updatedFields']}<br>\nTags: @{body('Parse_JSON_Incident_Updates')?['labels']}<br>\nTactics: @{body('Parse_JSON_Incident_Updates')?['tactics']}<br>\nSource: @{body('Parse_JSON_Incident_Updates')?['updatedBy']?['source']}</p>"
+                                                        },
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "post",
+                                                        "path": "/Incidents/Comment"
+                                                    },
+                                                    "runAfter": {
+                                                        "Condition": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "ApiConnection"
+                                                },
+                                                "Condition": {
+                                                    "actions": {
+                                                        "Update_incident": {
+                                                            "inputs": {
+                                                                "body": {
+                                                                    "classification": {
+                                                                        "ClassificationAndReason": "@variables('IncidentClassificationInfo')",
+                                                                        "ClassificationReasonText": "@body('Get_incident_(Source_Tenant)')?['properties']?['classificationComment']"
+                                                                    },
+                                                                    "incidentArmId": "@variables('TargetTenantIncidentArmIDFull')",
+                                                                    "owner": "@body('Get_incident_TargetTenant')?['properties']?['owner']?['objectId']",
+                                                                    "ownerAction": "@body('Get_incident_TargetTenant')?['properties']?['owner']?['assignedTo']",
+                                                                    "severity": "@body('Get_incident_TargetTenant')?['properties']?['severity']",
+                                                                    "status": "Closed"
+                                                                },
+                                                                "host": {
+                                                                    "connection": {
+                                                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                                    }
+                                                                },
+                                                                "method": "put",
+                                                                "path": "/Incidents"
+                                                            },
+                                                            "runAfter": {},
+                                                            "type": "ApiConnection"
+                                                        }
+                                                    },
+                                                    "else": {
+                                                        "actions": {
+                                                            "Update_incident_TargetTenant": {
+                                                                "inputs": {
+                                                                    "body": {
+                                                                        "classification": "@body('Get_incident_TargetTenant')?['properties']?['classification']",
+                                                                        "incidentArmId": "@variables('TargetTenantIncidentArmIDFull')",
+                                                                        "owner": "@body('Get_incident_TargetTenant')?['properties']?['owner']?['objectId']",
+                                                                        "ownerAction": "@body('Get_incident_(Source_Tenant)')?['properties']?['owner']?['assignedTo']",
+                                                                        "severity": "@body('Get_incident_(Source_Tenant)')?['properties']?['severity']",
+                                                                        "status": "@body('Get_incident_(Source_Tenant)')?['properties']?['status']"
+                                                                    },
+                                                                    "host": {
+                                                                        "connection": {
+                                                                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                                        }
+                                                                    },
+                                                                    "method": "put",
+                                                                    "path": "/Incidents"
+                                                                },
+                                                                "runAfter": {},
+                                                                "type": "ApiConnection"
+                                                            }
+                                                        }
+                                                    },
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "equals": [
+                                                                    "@body('Get_incident_(Source_Tenant)')?['properties']?['status']",
+                                                                    "Closed"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    "runAfter": {
+                                                        "Get_incident_TargetTenant": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "If"
+                                                },
+                                                "Get_incident_TargetTenant": {
+                                                    "inputs": {
+                                                        "body": {
+                                                            "incidentArmId": "@variables('TargetTenantIncidentArmIDFull')"
+                                                        },
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "post",
+                                                        "path": "/Incidents"
+                                                    },
+                                                    "runAfter": {
+                                                        "Set_variable": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "ApiConnection"
+                                                },
+                                                "Parse_JSON_Incident_Updates": {
+                                                    "inputs": {
+                                                        "content": "@variables('IncidentUpdates')",
+                                                        "schema": {
+                                                            "properties": {
+                                                                "alerts": {
+                                                                    "type": "array"
+                                                                },
+                                                                "comments": {
+                                                                    "type": "array"
+                                                                },
+                                                                "labels": {
+                                                                    "type": "array"
+                                                                },
+                                                                "tactics": {
+                                                                    "type": "array"
+                                                                },
+                                                                "updatedBy": {
+                                                                    "properties": {
+                                                                        "name": {
+                                                                            "type": "string"
+                                                                        },
+                                                                        "source": {
+                                                                            "type": "string"
+                                                                        }
+                                                                    },
+                                                                    "type": "object"
+                                                                },
+                                                                "updatedFields": {
+                                                                    "items": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "type": "array"
+                                                                },
+                                                                "updatedTime": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        }
+                                                    },
+                                                    "runAfter": {
+                                                        "Set_variable_Incident_Updates": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "ParseJson"
+                                                },
+                                                "Set_variable": {
+                                                    "inputs": {
+                                                        "name": "IncidentClassificationInfo",
+                                                        "value": "@{concat(triggerBody()?['object']?['properties']?['classification'],' - ',triggerBody()?['object']?['properties']?['classificationReason'])}"
+                                                    },
+                                                    "runAfter": {
+                                                        "Parse_JSON_Incident_Updates": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "SetVariable"
+                                                },
+                                                "Set_variable_Incident_Updates": {
+                                                    "inputs": {
+                                                        "name": "IncidentUpdates",
+                                                        "value": "@{triggerBody()?['incidentUpdates']}"
+                                                    },
+                                                    "runAfter": {
+                                                        "Set_variable_TargetTenantIncidentArmIDFull": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "SetVariable"
+                                                },
+                                                "Set_variable_TargetTenantIncidentArmID": {
+                                                    "inputs": {
+                                                        "name": "TargetTenantIncidentArmID",
+                                                        "value": "@items('For_each_Target_Tenant_ID')['IncidentUrl']"
+                                                    },
+                                                    "runAfter": {
+                                                        "Set_variable_TargetTenantTag": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "SetVariable"
+                                                },
+                                                "Set_variable_TargetTenantIncidentArmIDFull": {
+                                                    "inputs": {
+                                                        "name": "TargetTenantIncidentArmIDFull",
+                                                        "value": "@{substring(variables('TargetTenantIncidentArmID'), 74,232)}"
+                                                    },
+                                                    "runAfter": {
+                                                        "Set_variable_TargetTenantIncidentArmID": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "SetVariable"
+                                                },
+                                                "Set_variable_TargetTenantIncidentID": {
+                                                    "inputs": {
+                                                        "name": "TargetTenantIncidentID",
+                                                        "value": "@{items('For_each_Target_Tenant_ID')['IncidentNumber']}"
+                                                    },
+                                                    "runAfter": {},
+                                                    "type": "SetVariable"
+                                                },
+                                                "Set_variable_TargetTenantTag": {
+                                                    "inputs": {
+                                                        "name": "TargetTenantTag",
+                                                        "value": "@items('For_each_Target_Tenant_ID')['LabelName']"
+                                                    },
+                                                    "runAfter": {
+                                                        "Set_variable_TargetTenantIncidentID": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "SetVariable"
+                                                }
+                                            },
+                                            "foreach": "@body('Parse_JSON_Query_from_Target_Tenant')",
+                                            "runAfter": {
+                                                "Parse_JSON_Query_from_Target_Tenant": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "Foreach"
+                                        },
+                                        "Parse_JSON_Query_from_Target_Tenant": {
+                                            "inputs": {
+                                                "content": "@body('Run_query_and_list_results')?['value']",
+                                                "schema": {
+                                                    "items": {
+                                                        "properties": {
+                                                            "IncidentNumber": {
+                                                                "type": "integer"
+                                                            },
+                                                            "IncidentUrl": {
+                                                                "type": "string"
+                                                            },
+                                                            "LabelName": {
+                                                                "type": "string"
+                                                            }
+                                                        },
+                                                        "required": [
+                                                            "IncidentNumber",
+                                                            "LabelName",
+                                                            "IncidentUrl"
+                                                        ],
+                                                        "type": "object"
+                                                    },
+                                                    "type": "array"
+                                                }
+                                            },
+                                            "runAfter": {},
+                                            "type": "ParseJson"
+                                        }
+                                    },
+                                    "foreach": "@body('Run_query_and_list_results')?['value']",
+                                    "runAfter": {
+                                        "Set_variable_3": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Foreach"
+                                },
+                                "Set_variable_3": {
+                                    "inputs": {
+                                        "name": "ControlFlag",
+                                        "value": "Update"
+                                    },
+                                    "runAfter": {},
+                                    "type": "SetVariable"
+                                }
+                            },
+                            "else": {
+                                "actions": {
+                                    "Create_incident_on_the_target_tenant": {
+                                        "inputs": {
+                                            "body": {
+                                                "classification": "@body('Get_incident_(Source_Tenant)')?['properties']?['classification']",
+                                                "description": "@body('Get_incident_(Source_Tenant)')?['properties']?['description']",
+                                                "owner": "@body('Get_incident_(Source_Tenant)')?['properties']?['owner']?['objectId']",
+                                                "ownerAction": "@body('Get_incident_(Source_Tenant)')?['properties']?['owner']?['assignedTo']",
+                                                "severity": "@body('Get_incident_(Source_Tenant)')?['properties']?['severity']",
+                                                "status": "@body('Get_incident_(Source_Tenant)')?['properties']?['status']",
+                                                "tagsToAdd": {
+                                                    "TagsToAdd": [
+                                                        {
+                                                            "Tag": "CN_ID:@{variables('SourceTenantIncidentID')}"
+                                                        },
+                                                        {
+                                                            "Tag": "ProductName:@{body('Get_incident_(Source_Tenant)')?['properties']?['additionalData']?['alertProductNames']}"
+                                                        },
+                                                        {
+                                                            "Tag": "URL:@{body('Get_incident_(Source_Tenant)')?['properties']?['incidentUrl']}"
+                                                        }
+                                                    ]
+                                                },
+                                                "title": "(CN) - @{body('Get_incident_(Source_Tenant)')?['properties']?['title']}"
+                                            },
+                                            "host": {
+                                                "connection": {
+                                                    "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                }
+                                            },
+                                            "method": "put",
+                                            "path": "/Incidents/subscriptions/@{encodeURIComponent('d4131f95-b8b9-4694-886a-5accdadf8a64')}/resourceGroups/@{encodeURIComponent('rg-security-01')}/workspaces/@{encodeURIComponent('law-sentinel-01')}"
+                                        },
+                                        "runAfter": {},
+                                        "type": "ApiConnection"
+                                    },
+                                    "For_each_Entity_found": {
+                                        "actions": {
+                                            "Add_task_to_incident_on_target_tenant": {
+                                                "inputs": {
+                                                    "body": {
+                                                        "incidentArmId": "@body('Create_incident_on_the_target_tenant')?['id']",
+                                                        "taskDescription": "<p>Entities list:<br>\nid: @{items('For_each_Entity_found')['id']}<br>\ntype: @{items('For_each_Entity_found')['type']}<br>\nkind: @{items('For_each_Entity_found')['kind']}<br>\naccountName: @{items('For_each_Entity_found')?['properties']?['accountName']}<br>\nupnSuffix: @{items('For_each_Entity_found')?['properties']?['upnSuffix']}<br>\nfriendlyName: @{items('For_each_Entity_found')?['properties']?['friendlyName']}<br>\nproperties: @{items('For_each_Entity_found')['properties']}</p>",
+                                                        "taskTitle": "Validate the involved entity: @{items('For_each_Entity_found')['kind']}"
+                                                    },
+                                                    "host": {
+                                                        "connection": {
+                                                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                        }
+                                                    },
+                                                    "method": "post",
+                                                    "path": "/Incidents/CreateTask"
+                                                },
+                                                "runAfter": {},
+                                                "type": "ApiConnection"
+                                            }
+                                        },
+                                        "foreach": "@body('Parse_JSON_Get_Entities')",
+                                        "runAfter": {
+                                            "Parse_JSON_Get_Entities": [
+                                                "Succeeded"
+                                            ]
+                                        },
+                                        "type": "Foreach"
+                                    },
+                                    "Parse_JSON_Get_Entities": {
+                                        "inputs": {
+                                            "content": "@variables('GetEntities')",
+                                            "schema": {
+                                                "items": {
+                                                    "properties": {
+                                                        "id": {
+                                                            "type": "string"
+                                                        },
+                                                        "kind": {
+                                                            "type": "string"
+                                                        },
+                                                        "properties": {
+                                                            "properties": {
+                                                                "accountName": {
+                                                                    "type": "string"
+                                                                },
+                                                                "friendlyName": {
+                                                                    "type": "string"
+                                                                },
+                                                                "upnSuffix": {
+                                                                    "type": "string"
+                                                                }
+                                                            },
+                                                            "type": "object"
+                                                        },
+                                                        "type": {
+                                                            "type": "string"
+                                                        }
+                                                    },
+                                                    "required": [
+                                                        "id",
+                                                        "type",
+                                                        "kind",
+                                                        "properties"
+                                                    ],
+                                                    "type": "object"
+                                                },
+                                                "type": "array"
+                                            }
+                                        },
+                                        "runAfter": {
+                                            "Create_incident_on_the_target_tenant": [
+                                                "Succeeded"
+                                            ]
+                                        },
+                                        "type": "ParseJson"
+                                    },
+                                    "Set_variable_ControlFlag": {
+                                        "inputs": {
+                                            "name": "ControlFlag",
+                                            "value": "Create"
+                                        },
+                                        "runAfter": {
+                                            "Set_variable_TargetTenantIncidentArmIdFull_for_Create": [
+                                                "Succeeded"
+                                            ]
+                                        },
+                                        "type": "SetVariable"
+                                    },
+                                    "Set_variable_TargetTenantIncidentArmIdFull_for_Create": {
+                                        "inputs": {
+                                            "name": "TargetTenantIncidentArmIDFull",
+                                            "value": "@body('Create_incident_on_the_target_tenant')?['id']"
+                                        },
+                                        "runAfter": {
+                                            "For_each_Entity_found": [
+                                                "Succeeded"
+                                            ]
+                                        },
+                                        "type": "SetVariable"
+                                    }
+                                }
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "not": {
+                                            "equals": [
+                                                "@length(body('Run_query_and_list_results')?['value'])",
+                                                0
+                                            ]
+                                        }
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Run_query_and_list_results": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "Initialize_variable_ControlFlag": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "ControlFlag",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_IncidentClassificationInfo": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_GetEntities": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "GetEntities",
+                                        "type": "array",
+                                        "value": "@triggerBody()?['object']?['properties']?['relatedEntities']"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_TargetTenantIncidentArmIDFull": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_IncidentClassificationInfo": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "IncidentClassificationInfo",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_IncidentUpdates": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_IncidentUpdates": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "IncidentUpdates",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_GetEntities": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_SourceTenantIncidentID": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "SourceTenantIncidentID",
+                                        "type": "string",
+                                        "value": "@{body('Get_incident_(Source_Tenant)')?['properties']?['incidentNumber']}"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Get_incident_(Source_Tenant)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_TargetTenantIncidentArmID": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "TargetTenantIncidentArmID",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_TargetTenantTag": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_TargetTenantIncidentArmIDFull": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "TargetTenantIncidentArmIDFull",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_TargetTenantIncidentArmID": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_TargetTenantIncidentID": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "TargetTenantIncidentID",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_SourceTenantIncidentID": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Initialize_variable_TargetTenantTag": {
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "TargetTenantTag",
+                                        "type": "string"
+                                    }
+                                ]
+                            },
+                            "runAfter": {
+                                "Initialize_variable_TargetTenantIncidentID": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable"
+                        },
+                        "Parse_JSON_Alerts_parsed_values": {
+                            "inputs": {
+                                "content": "@body('Run_query_and_list_results_Lets_find_what_Alerts_the_incident_has')?['value']",
+                                "schema": {
+                                    "items": {
+                                        "properties": {
+                                            "AlertName": {
+                                                "type": "string"
+                                            },
+                                            "AlertSeverity": {
+                                                "type": "string"
+                                            },
+                                            "Description": {
+                                                "type": "string"
+                                            },
+                                            "EndTime": {
+                                                "type": "string"
+                                            },
+                                            "ProcessingEndTime": {
+                                                "type": "string"
+                                            },
+                                            "ProductName": {
+                                                "type": "string"
+                                            },
+                                            "StartTime": {
+                                                "type": "string"
+                                            },
+                                            "Tactics": {
+                                                "type": "string"
+                                            },
+                                            "cId": {
+                                                "type": "string"
+                                            },
+                                            "cId1": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "required": [
+                                            "cId",
+                                            "cId1",
+                                            "AlertName",
+                                            "AlertSeverity",
+                                            "Description",
+                                            "Tactics",
+                                            "ProductName",
+                                            "StartTime",
+                                            "EndTime",
+                                            "ProcessingEndTime"
+                                        ],
+                                        "type": "object"
+                                    },
+                                    "type": "array"
+                                }
+                            },
+                            "runAfter": {
+                                "Run_query_and_list_results_Lets_find_what_Alerts_the_incident_has": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ParseJson"
+                        },
+                        "Run_query_and_list_results": {
+                            "inputs": {
+                                "body": "SecurityIncident\n| where TimeGenerated > ago (180d)\n| mv-expand ParsedFields=parse_json(Labels)\n| extend LabelName=tostring(ParsedFields.labelName)\n| where LabelName == \"CN_ID:@{variables('SourceTenantIncidentID')}\" and Status <> \"Deleted\"\n| distinct IncidentNumber, IncidentUrl, LabelName",
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuremonitorlogs_1']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/queryData",
+                                "queries": {
+                                    "resourcegroups": "[parameters('Tenant2RG')]",
+                                    "resourcename": "[parameters('Tenant2LAW')]",
+                                    "resourcetype": "Log Analytics Workspace",
+                                    "subscriptions": "[parameters('Tenant2SubscriptionID')]",
+                                    "timerange": "Set in query"
+                                }
+                            },
+                            "runAfter": {
+                                "Delay": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection"
+                        },
+                        "Run_query_and_list_results_Lets_find_what_Alerts_the_incident_has": {
+                            "inputs": {
+                                "body": "SecurityIncident\n| where TimeGenerated > ago(180d)\n| mv-expand ParsedFields=parse_json(AlertIds)\n| extend cId=tostring(ParsedFields)\n| where IncidentNumber == @{variables('SourceTenantIncidentID')}\n| project cId\n| join (SecurityAlert \n    | where TimeGenerated > ago(180d) \n    | project cId = SystemAlertId, AlertName, AlertSeverity, Description, Tactics, ProductName, StartTime, EndTime, ProcessingEndTime\n    )\non $left.cId == $right.cId",
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuremonitorlogs_1']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/queryData",
+                                "queries": {
+                                    "resourcegroups": "[parameters('Tenant2RG')]",
+                                    "resourcename": "[parameters('Tenant2LAW')]",
+                                    "resourcetype": "Log Analytics Workspace",
+                                    "subscriptions": "[parameters('Tenant2SubscriptionID')]",
+                                    "timerange": "Set in query"
+                                }
+                            },
+                            "runAfter": {
+                                "Delay_2": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection"
+                        },
+                        "Switch": {
+                            "cases": {
+                                "Case": {
+                                    "actions": {
+                                        "For_each_2": {
+                                            "actions": {
+                                                "Condition_2": {
+                                                    "actions": {},
+                                                    "else": {
+                                                        "actions": {
+                                                            "Add_task_to_incident": {
+                                                                "inputs": {
+                                                                    "body": {
+                                                                        "incidentArmId": "@variables('TargetTenantIncidentArmIDFull')",
+                                                                        "taskDescription": "<p>Alert ID: @{items('For_each_2')['cId']}<br>\nAlert Name: @{items('For_each_2')['AlertName']}<br>\nAlert Severity: @{items('For_each_2')['AlertSeverity']}<br>\nDescription: @{items('For_each_2')['Description']}<br>\nTactics: @{items('For_each_2')['Tactics']}<br>\nProductName: @{items('For_each_2')['ProductName']}<br>\nStartTime: @{items('For_each_2')['StartTime']}<br>\nEndTime: @{items('For_each_2')['EndTime']}<br>\nProcessingEndTime: @{items('For_each_2')['ProcessingEndTime']}</p>",
+                                                                        "taskTitle": "AlertIdTask:@{items('For_each_2')['cId']}"
+                                                                    },
+                                                                    "host": {
+                                                                        "connection": {
+                                                                            "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                                        }
+                                                                    },
+                                                                    "method": "post",
+                                                                    "path": "/Incidents/CreateTask"
+                                                                },
+                                                                "runAfter": {},
+                                                                "type": "ApiConnection"
+                                                            }
+                                                        }
+                                                    },
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "not": {
+                                                                    "equals": [
+                                                                        "@length(body('Run_query_and_list_results_check_alerts')?['value'])",
+                                                                        0
+                                                                    ]
+                                                                }
+                                                            }
+                                                        ]
+                                                    },
+                                                    "runAfter": {
+                                                        "Run_query_and_list_results_check_alerts": [
+                                                            "Succeeded"
+                                                        ]
+                                                    },
+                                                    "type": "If"
+                                                },
+                                                "Run_query_and_list_results_check_alerts": {
+                                                    "inputs": {
+                                                        "body": "SecurityIncident\n| where TimeGenerated > ago(180d)\n| where IncidentNumber == @{variables('TargetTenantIncidentID')}\n| mv-expand ParsedFields=parse_json(Tasks)\n| extend ctitle = extract_json(\"$.title\", tostring(ParsedFields), typeof(string ))\n| where ctitle == \"AlertIdTask:@{items('For_each_2')['cId']}\"\n| distinct ctitle",
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azuremonitorlogs']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "post",
+                                                        "path": "/queryData",
+                                                        "queries": {
+                                                            "resourcegroups": "[parameters('Tenant1RG')]",
+                                                            "resourcename": "[parameters('Tenant1LAW')]",
+                                                            "resourcetype": "Log Analytics Workspace",
+                                                            "subscriptions": "[parameters('Tenant1SubscriptionID')]",
+                                                            "timerange": "Set in query"
+                                                        }
+                                                    },
+                                                    "runAfter": {},
+                                                    "type": "ApiConnection"
+                                                }
+                                            },
+                                            "foreach": "@body('Parse_JSON_Alerts_parsed_values')",
+                                            "runAfter": {},
+                                            "type": "Foreach"
+                                        }
+                                    },
+                                    "case": "Update"
+                                },
+                                "Case_2": {
+                                    "actions": {
+                                        "For_each": {
+                                            "actions": {
+                                                "Add_task_to_incident_2": {
+                                                    "inputs": {
+                                                        "body": {
+                                                            "incidentArmId": "@variables('TargetTenantIncidentArmIDFull')",
+                                                            "taskDescription": "<p>Alert Id: @{items('For_each')['cId']}<br>\nAlert Name: @{items('For_each')['AlertName']}<br>\nAlert Severity: @{items('For_each')['AlertSeverity']}<br>\nDescription: @{items('For_each')['Description']}<br>\nTactics: @{items('For_each')['Tactics']}<br>\nProductName: @{items('For_each')['ProductName']}<br>\nStartTime: @{items('For_each')['StartTime']}<br>\nEndTime: @{items('For_each')['EndTime']}<br>\nProcessingEndTime: @{items('For_each')['ProcessingEndTime']}</p>",
+                                                            "taskTitle": "AlertIdTask:@{items('For_each')['cId']}"
+                                                        },
+                                                        "host": {
+                                                            "connection": {
+                                                                "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                            }
+                                                        },
+                                                        "method": "post",
+                                                        "path": "/Incidents/CreateTask"
+                                                    },
+                                                    "runAfter": {},
+                                                    "type": "ApiConnection"
+                                                }
+                                            },
+                                            "foreach": "@body('Parse_JSON_Alerts_parsed_values')",
+                                            "runAfter": {},
+                                            "type": "Foreach"
+                                        }
+                                    },
+                                    "case": "Create"
+                                }
+                            },
+                            "default": {
+                                "actions": {
+                                    "Set_variable_2": {
+                                        "inputs": {
+                                            "name": "ControlFlag",
+                                            "value": "ErrorFound"
+                                        },
+                                        "runAfter": {},
+                                        "type": "SetVariable"
+                                    }
+                                }
+                            },
+                            "expression": "@variables('ControlFlag')",
+                            "runAfter": {
+                                "Parse_JSON_Alerts_parsed_values": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Switch"
+                        }
+                    },
+                    "contentVersion": "1.0.0.0",
+                    "outputs": {},
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Microsoft_Sentinel_incident": {
+                            "inputs": {
+                                "body": {
+                                    "callback_url": "@{listCallbackUrl()}"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel_1']['connectionId']"
+                                    }
+                                },
+                                "path": "/incident-creation"
+                            },
+                            "type": "ApiConnectionWebhook"
+                        }
+                    }
+                },
+
+
+    "parameters": {
+        "$connections": {
+            "value": {
+                "azuremonitorlogs": {
+                    "connectionId": "[resourceId('Microsoft.Web/connections', variables('LogAnalyticsTenant1Conn'))]",
+                    "connectionName": "[variables('LogAnalyticsTenant1Conn')]",
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]"
+                },
+                "azuremonitorlogs_1": {
+                    "connectionId": "[resourceId('Microsoft.Web/connections', variables('LogAnalyticsTenant2Conn'))]",
+                    "connectionName": "[variables('LogAnalyticsTenant2Conn')]",
+                    "connectionProperties": {
+                        "authentication": {
+                            "identity": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('ManagedIdentity'))]",
+                            "type": "ManagedServiceIdentity"
+                        }
+                    },
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]"
+                },
+                "azuresentinel": {
+                    "connectionId": "[resourceId('Microsoft.Web/connections', variables('MSSentinelTenant1Conn'))]",
+                    "connectionName": "[variables('MSSentinelTenant1Conn')]",
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                },
+                "azuresentinel_1": {
+                    "connectionId": "[resourceId('Microsoft.Web/connections', variables('MSSentinelTenant2Conn'))]",
+                    "connectionName": "[variables('MSSentinelTenant2Conn')]",
+                    "connectionProperties": {
+                        "authentication": {
+                            "identity": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('ManagedIdentity'))]",
+                            "type": "ManagedServiceIdentity"
+                            }
+                    },
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                }
+            }
+        }
+    }
+            }
+        }
+    ]
+}

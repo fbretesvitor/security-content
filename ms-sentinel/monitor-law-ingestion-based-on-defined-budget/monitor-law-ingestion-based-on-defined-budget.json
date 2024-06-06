@@ -1,0 +1,466 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+        "metadata": {
+        "title": "Monitor Log Analytics Workspace ingestion data ", 
+        "description": "##",
+        "prerequisites": "Managed identity to Get infro from Log Analytics workspace. Microsoft Teams account.",
+        "lastUpdateTime": "2024-06-06T00:00:00.000Z", 
+        "entities": ["log-analytics-workspace"], 
+        "tags": ["Budget-management"], 
+        "support": {
+            "tier": "community" 
+        },
+        "author": {
+            "name": "FBVitor"
+        }
+    },
+    "parameters": {
+        "playbookName": {
+            "defaultValue": "plb-Control-LAW-Ingestion-001",
+            "type": "string"
+        },
+        "managed-identity-name" :{
+            "defaultValue": "<insert-managed-identity-name>",
+            "type": "string"
+        },
+        "log-analytics-workspace-id": {
+            "defaultValue": "<insert-log-analytics-workspace-id>",
+            "type": "string"
+        },
+        "log-analytics-workspace-name": {
+            "defaultValue": "<insert-log-analytics-workspace-name>",
+            "type": "string"
+        },
+        "sentinel-montly-budget": {
+            "defaultValue": 5000,
+            "type": "int"
+        }
+    },
+    "variables": {
+        "azuremonitorlogs": "[concat('api-connection-azuremonitorlogs-', parameters('playbookName'))]",
+        "azuresentinel": "[concat('api-connection-azuresentinel-', parameters('playbookName'))]",
+        "teams": "[concat('api-connection-teams-', parameters('playbookName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('azuremonitorlogs')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('azuremonitorlogs')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]",
+                    "type": "Microsoft.Web/locations/managedApis"
+                },
+                "parameterValueSet": {
+                    "name": "managedIdentityAuth",
+                    "values": {}
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('azuresentinel')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('azuresentinel')]",
+                "customParameterValues": {},
+                "parameterValueType": "Alternative",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                }
+            }
+        },
+                {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('teams')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('teams')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/teams')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('playbookName')]",
+            "location": "[resourceGroup().location]",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('managed-identity-name'))]": {}
+                }            
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Recurrence": {
+                            "recurrence": {
+                                "frequency": "Hour",
+                                "interval": 1,
+                                "timeZone": "GMT Standard Time"
+                            },
+                            "evaluatedRecurrence": {
+                                "frequency": "Hour",
+                                "interval": 1,
+                                "timeZone": "GMT Standard Time"
+                            },
+                            "type": "Recurrence"
+                        }
+                    },
+                    "actions": {
+                        "For_each_2": {
+                            "foreach": "@body('Parse_JSON')",
+                            "actions": {
+                                "Condition_2": {
+                                    "actions": {
+                                        "Add_task_to_incident": {
+                                            "runAfter": {
+                                                "Create_incident": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "body": {
+                                                    "incidentArmId": "@body('Create_incident')?['id']",
+                                                    "taskDescription": "<p>Log Analytics Workspace (@{variables('log_analytics_workspace_id')}) Cost exceeded by available daily budget:<br>\nDaily Ingested Data: @{items('For_each_2')['BilledIngestedDataGB']}GB<br>\nEstimated Cost: @{items('For_each_2')['EstimatedCostEUR']}EUR<br>\n<br>\nCurrently, there are defined the budget:<br>\nDefined Daily budget: @{items('For_each_2')['daily_budgetEUR']}EUR<br>\nCurrently, on WE datacenter, the cost per GB ingested:<br>\nPrice per GB in WE: @{items('For_each_2')['price_per_GB_WE_EUR']}EUR <br>\n<br>\nThe following table presents the consumption for the current month:@{base64ToString(body('Run_query_and_visualize_results')?['attachmentContent'])}</p>",
+                                                    "taskTitle": "Validate data ingestion for the Log Analytics workspace @{variables('log_analytics_workspace_name')}"
+                                                },
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/Incidents/CreateTask"
+                                            }
+                                        },
+                                        "Create_incident": {
+                                            "runAfter": {},
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "body": {
+                                                    "owner": "<incident-owner>",
+                                                    "ownerAction": "Assign",
+                                                    "severity": "High",
+                                                    "status": "New",
+                                                    "tagsToAdd": {
+                                                        "TagsToAdd": [
+                                                            {
+                                                                "Tag": "budget-management"
+                                                            }
+                                                        ]
+                                                    },
+                                                    "title": "Costs exceeds available daily budget! Check more details on the assigned task"
+                                                },
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "put",
+                                                "path": "/Incidents/subscriptions/@{encodeURIComponent(subscription().subscriptionId)}/resourceGroups/@{encodeURIComponent(resourceGroup().name)}/workspaces/@{encodeURIComponent(parameters('log-analytics-workspace-name'))}"
+                                            }
+                                        },
+                                        "Post_message_in_a_chat_or_channel": {
+                                            "runAfter": {
+                                                "Add_task_to_incident": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "body": {
+                                                    "isAlert": true,
+                                                    "messageBody": "<p><span style=\"font-size: 16px\"><u>Log Analytics Workspace Cost exceeded by available daily budget:</u></span></p>\n<p><strong>Daily Ingested Data: </strong>@{items('For_each_2')['BilledIngestedDataGB']}GB</p>\n<p><strong>Estimated Cost: </strong>@{items('For_each_2')['EstimatedCostEUR']}EUR</p>\n<p>Currently, there are defined the budget:</p>\n<p><strong>Defined Daily budget: </strong>@{items('For_each_2')['daily_budgetEUR']}EUR</p>\n<p>Currently, on WE datacenter, the cost per GB ingested:</p>\n<p><strong>Price per GB in WE: </strong>@{items('For_each_2')['price_per_GB_WE_EUR']}EUR<br>\n<br>\nThe following table presents the consumption for the current month:</p>\n<p>@{base64ToString(body('Run_query_and_visualize_results')?['attachmentContent'])}</p>",
+                                                    "recipient": "<recipient>"
+                                                },
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['teams']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "path": "/beta/teams/conversation/message/poster/Flow bot/location/@{encodeURIComponent('Chat with Flow bot')}"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {},
+                                    "expression": {
+                                        "and": [
+                                            {
+                                                "greater": [
+                                                    "@items('For_each_2')['EstimatedCostEUR']",
+                                                    "@items('For_each_2')['daily_budgetEUR']"
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    "type": "If"
+                                }
+                            },
+                            "runAfter": {
+                                "Run_query_and_visualize_results": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        },
+                        "Initialize_variable_(Log-analytics-workspace-id)": {
+                            "runAfter": {
+                                "Initialize_variable_(daily_budget)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "log_analytics_workspace_id",
+                                        "type": "string",
+                                        "value": "[parameters('log-analytics-workspace-id')]"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_(Log-analytics-workspace-name)": {
+                            "runAfter": {
+                                "Initialize_variable_(Log-analytics-workspace-id)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "log_analytics_workspace_name",
+                                        "type": "string",
+                                        "value": "[parameters('log-analytics-workspace-name')]"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_(daily_budget)": {
+                            "runAfter": {
+                                "Initialize_variable_(monthly_budget)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "daily_budget",
+                                        "type": "float"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_(monthly_budget)": {
+                            "runAfter": {
+                                "Initialize_variable_(price_per_GB)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "monthly_budget",
+                                        "type": "float",
+                                        "value": "[parameters('sentinel-montly-budget')]"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_(price_per_GB)": {
+                            "runAfter": {},
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "price_per_GB",
+                                        "type": "float",
+                                        "value": 5.17
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_1": {
+                            "runAfter": {
+                                "Run_query_and_list_results": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "temp-get-output",
+                                        "type": "array",
+                                        "value": "@body('Run_query_and_list_results')?['value']"
+                                    }
+                                ]
+                            }
+                        },
+                        "Parse_JSON": {
+                            "runAfter": {
+                                "Initialize_variable_1": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ParseJson",
+                            "inputs": {
+                                "content": "@body('Run_query_and_list_results')?['value']",
+                                "schema": {
+                                    "items": {
+                                        "properties": {
+                                            "BilledIngestedDataGB": {
+                                                "type": "number"
+                                            },
+                                            "EstimatedCostEUR": {
+                                                "type": "number"
+                                            },
+                                            "daily_budgetEUR": {
+                                                "type": "number"
+                                            },
+                                            "price_per_GB_WE_EUR": {
+                                                "type": "number"
+                                            }
+                                        },
+                                        "required": [
+                                            "BilledIngestedDataGB",
+                                            "EstimatedCostEUR",
+                                            "price_per_GB_WE_EUR",
+                                            "daily_budgetEUR"
+                                        ],
+                                        "type": "object"
+                                    },
+                                    "type": "array"
+                                }
+                            }
+                        },
+                        "Run_query_and_list_results": {
+                            "runAfter": {
+                                "Initialize_variable_(Log-analytics-workspace-name)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": "let price_per_GB_WE_EUR = @{variables('price_per_GB')}; // West Europe public price\nlet monthly_days = 31;\nlet monthly_budgetEUR = @{variables('monthly_budget')}; // $15 per month as budget\nlet daily_budgetEUR = round(toreal(monthly_budgetEUR)/toreal(monthly_days),2);\nUsage\n| where TimeGenerated > startofday(ago(1d))\n| where IsBillable == true\n| summarize AggregatedValue= round(sum(Quantity)/1024,2) by IsBillable\n| project BilledIngestedDataGB=AggregatedValue, EstimatedCostEUR=round(toreal(AggregatedValue*price_per_GB_WE_EUR),2), price_per_GB_WE_EUR, daily_budgetEUR",
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuremonitorlogs']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/queryData",
+                                "queries": {
+                                    "resourcegroups": "[resourceGroup().name]",
+                                    "resourcename": "[parameters('log-analytics-workspace-name')]",
+                                    "resourcetype": "Log Analytics Workspace",
+                                    "subscriptions": "[subscription().subscriptionId]",
+                                    "timerange": "Set in query"
+                                }
+                            }
+                        },
+                        "Run_query_and_visualize_results": {
+                            "runAfter": {
+                                "Set_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": "let begin_of_month = startofmonth(now());\nlet price_per_gb = @{variables('price_per_GB')};\nlet Categories = datatable(Type:string,Category:string)\n[\n   \"AuditLogs\", \"Azure Active Directory\",\n   \"SigninLogs\", \"Azure Active Directory\",\n   \"AADNonInteractiveUserSignInLogs\", \"Azure Active Directory\",\n   \"AADServicePrincipalSignInLogs\", \"Azure Active Directory\",\n   \"AADManagedIdentitySignInLogs\", \"Azure Active Directory\",\n   \"AADProvisioningLogs\",\"Azure Active Directory\",\n   \"BehaviorAnalytics\", \"User Entity Behavior Analytics\",\n   \"UserPeerAnalytics\",\"User Entity Behavior Analytics\",\n   \"UserAccessAnalytics\",\"User Entity Behavior Analytics\",\n   \"IdentityInfo\",\"User Entity Behavior Analytics\",\n   \"DeviceLogonEvents\", \"Microsoft Defender for Endpoint\",\n\t\"DeviceEvents\",\"Microsoft Defender for Endpoint\",\n\t\"DeviceNetworkInfo\", \"Microsoft Defender for Endpoint\",\n\t\"DeviceImageLoadEvents\", \"Microsoft Defender for Endpoint\",\n\t\"DeviceFileEvents\", \"Microsoft Defender for Endpoint\",\n\t\"DeviceInfo\", \"Microsoft Defender for Endpoint\",\n\t\"DeviceProcessEvents\", \"Microsoft Defender for Endpoint\",\t\n\t\"DeviceNetworkEvents\", \"Microsoft Defender for Endpoint\",\n\t\"DeviceRegistryEvents\", \"Microsoft Defender for Endpoint\",\n    \"DeviceFileCertificateInfo\", \"Microsoft Defender for Endpoint\",\n    \"EmailAttachmentInfo\", \"Microsoft Defender for Office 365\",  \n    \"EmailEvents\", \"Microsoft Defender for Office 365\",  \n    \"EmailPostDeliveryEvents\", \"Microsoft Defender for Office 365\",  \n    \"EmailUrlInfo\", \"Microsoft Defender for Office 365\",\n    \"IdentityLogonEvents\", \"Microsoft Defender for Identity\",\n    \"IdentityQueryEvents\", \"Microsoft Defender for Identity\",\n    \"IdentityDirectoryEvents\", \"Microsoft Defender for Identity\",\n    \"CloudAppEvents\", \"Microsoft Defender for Cloud Apps\",\n    \"AlertEvidence\", \"Microsoft Defender Alert Evidence\",\n    \"InsightsMetrics\", \"Azure Monitor for VMs\",\n    \"VMBoundPort\", \"Azure Monitor for VMs\",\n    \"VMComputer\", \"Azure Monitor for VMs\",\n    \"VMConnection\", \"Azure Monitor for VMs\",\n    \"VMProcess\", \"Azure Monitor for VMs\",\n    \"SecurityEvent\", \"Windows Security Events\",\n    \"Syslog\", \"Syslog/CEF\",\n    \"CommonSecurityLog\", \"Syslog/CEF\",\n    \"ThreatIntelligenceIndicator\", \"Threat Intelligence\",\n    \"DnsEvents\", \"DNS Logs\",\n    \"DnsInventory\", \"DNS Logs\",\n    \"AWSCloudTrail\", \"AWS Cloud Trail\",\n    \"ConfigurationChange\", \"Change Tracking\",\n    \"ConfigurationData\", \"Change Tracking\",\n    \"AzureDiagnostics\", \"Azure Resources\",\n    \"LAQueryLogs\", \"Management\",\n    \"SentinelHealth\",\"Management\",\n    \"Perf\",\"Performance\",\n    \"AzureMetrics\",\"Azure Metrics\",\n    \"SecurityNestedRecommendation\", \"Microsoft Defender for Cloud\",\n    \"SecurityRecommendation\", \"Microsoft Defender for Cloud\",\n    \"SecurityRegulatoryCompliance\", \"Microsoft Defender for Cloud\",\n    \"SecureScoreControls\", \"Microsoft Defender for Cloud\",\n    \"SecurityBaseline\", \"Microsoft Defender for Cloud\",\n    \"SecureScores\", \"Microsoft Defender for Cloud\",\n    \"Update\", \"Update Management\",\n    \"UpdateSummary\", \"Update Management\"\n];\nlet customTables = Usage\n| where IsBillable == true\n| where TimeGenerated > begin_of_month\n| where DataType contains \"_CL\"\n| summarize size = sum(Quantity)/1024 by DataType\n| project ['Log Type'] = DataType, ['Table Size'] = size, ['Estimated cost'] = size*price_per_gb;\nlet knownTables = Usage\n| where IsBillable == true \n| where TimeGenerated > begin_of_month\n| join kind=leftouter Categories on $left.DataType == $right.Type\n| summarize size =sumif(Quantity, isnotempty(Category))/1024, sizeOther= sumif(Quantity,(isempty(Category) and DataType !contains \"_CL\"))/1024 by Category\n| project ['Log Type'] = iif(isnotempty( Category),Category,\"Other\"), ['Table Size'] = iif(isnotempty( Category),size,sizeOther), ['Estimated cost'] = iif(isnotempty(Category),size*price_per_gb,sizeOther*price_per_gb);\nunion customTables, knownTables\n| where ['Table Size'] > 0\n| order by ['Table Size'] desc\n| project ['Log Type'], round(toreal(['Table Size']),5), round(toreal(['Estimated cost']),2)",
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuremonitorlogs']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/visualizeQuery",
+                                "queries": {
+                                    "resourcegroups": "[resourceGroup().name]",
+                                    "resourcename": "[parameters('log-analytics-workspace-name')]",
+                                    "resourcetype": "Log Analytics Workspace",
+                                    "subscriptions": "[subscription().subscriptionId]",
+                                    "timerange": "Set in query",
+                                    "visType": "Html Table"
+                                }
+                            }
+                        },
+                        "Set_variable": {
+                            "runAfter": {
+                                "Parse_JSON": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "SetVariable",
+                            "inputs": {
+                                "name": "temp-get-output",
+                                "value": "@body('Run_query_and_list_results')?['value']"
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azuremonitorlogs": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('azuremonitorlogs'))]",
+                                "connectionName": "[variables('azuremonitorlogs')]",
+                                "connectionProperties": {
+                                    "authentication": {
+                                        "identity": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('managed-identity-name'))]",
+                                        "type": "ManagedServiceIdentity"
+                                    }
+                                },
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]"
+                            },
+                            "azuresentinel": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('azuresentinel'))]",
+                                "connectionName": "azuresentinel-plb-change-sentinel-incident-data",
+                                "connectionProperties": {
+                                    "authentication": {
+                                        "identity": "[parameters('managed-identity-name')]",
+                                        "type": "ManagedServiceIdentity"
+                                    }
+                                },
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                            },
+                            "teams": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('teams'))]",
+                                "connectionName": "teams",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/teams')]"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
