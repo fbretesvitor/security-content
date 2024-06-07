@@ -1,0 +1,1 @@
+## Exploring SOAR playbooks capabilities over MS Sentinel
