@@ -432,7 +432,7 @@
                         "value": {
                             "azuremonitorlogs": {
                                 "connectionId": "[resourceId('Microsoft.Web/connections', variables('azuremonitorlogs'))]",
-                                "connectionName": "[variables('azuremonitorlogs')]",
+                                "connectionName": "[concat('azuremonitorlogs-', parameters('playbookName'))]",
                                 "connectionProperties": {
                                     "authentication": {
                                         "identity": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('managed-identity-name'))]",
@@ -443,7 +443,7 @@
                             },
                             "azuresentinel": {
                                 "connectionId": "[resourceId('Microsoft.Web/connections', variables('azuresentinel'))]",
-                                "connectionName": "azuresentinel-plb-change-sentinel-incident-data",
+                                "connectionName": "[concat('azuresentinel-', parameters('playbookName'))]",
                                 "connectionProperties": {
                                     "authentication": {
                                         "identity": "[parameters('managed-identity-name')]",
@@ -454,7 +454,7 @@
                             },
                             "teams": {
                                 "connectionId": "[resourceId('Microsoft.Web/connections', variables('teams'))]",
-                                "connectionName": "teams",
+                                "connectionName": "[concat('teams-', parameters('playbookName'))]",
                                 "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/teams')]"
                             }
                         }
