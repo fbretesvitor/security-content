@@ -21,7 +21,7 @@
             "type": "string"
         },
         "managed-identity-name" :{
-            "defaultValue": "managed-identity-for-sentinel-001",
+            "defaultValue": "<insert-managed-identity-name>",
             "type": "string"
         }
     },
