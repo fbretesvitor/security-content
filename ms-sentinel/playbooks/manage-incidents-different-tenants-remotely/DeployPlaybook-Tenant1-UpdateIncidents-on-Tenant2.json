@@ -633,10 +633,10 @@
                                                             "method": "post",
                                                             "path": "/queryData",
                                                             "queries": {
-                                                                "resourcegroups": "rg-infra-fv-01",
-                                                                "resourcename": "law-ded-sentinel-fv-01",
+                                                                "resourcegroups": "[resourceGroup().name]",
+                                                                "resourcename": "[parameters('Tenant1LAW')]",
                                                                 "resourcetype": "Log Analytics Workspace",
-                                                                "subscriptions": "9d7c7c36-a69d-4846-9f7b-654cfd7a59e9",
+                                                                "subscriptions": "[subscription().subscriptionId]",
                                                                 "timerange": "Set in query"
                                                             }
                                                         },

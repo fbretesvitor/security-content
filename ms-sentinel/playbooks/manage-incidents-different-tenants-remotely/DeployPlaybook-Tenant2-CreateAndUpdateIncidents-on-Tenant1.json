@@ -534,7 +534,7 @@
                                                 }
                                             },
                                             "method": "put",
-                                            "path": "/Incidents/subscriptions/@{encodeURIComponent('d4131f95-b8b9-4694-886a-5accdadf8a64')}/resourceGroups/@{encodeURIComponent('rg-security-01')}/workspaces/@{encodeURIComponent('law-sentinel-01')}"
+                                            "path": "[concat('/Incidents/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/workspaces/', parameters('Tenant1LAW'))]"
                                         },
                                         "runAfter": {},
                                         "type": "ApiConnection"

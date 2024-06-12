@@ -1,0 +1,591 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+        "metadata": {
+        "title": "Start MDE remediation tasks based on Teams selected options. Resume of tasks posted on a Teams channel.", 
+        "description": "##",
+        "prerequisites": "Managed identity with access to read and write over managed log analytics workspace (by sentinel). MS Teams account with access to a dedicated Teams channel. App registration for MDE remediation tasks and permissions.",
+        "lastUpdateTime": "2024-06-07T00:00:00.000Z", 
+        "entities": ["account", "host"], 
+        "tags": ["mde", "teams", "sentinel"], 
+        "support": {
+            "tier": "community" 
+        },
+        "author": {
+            "name": "FBVitor"
+        }
+    },
+    "parameters": {
+        "playbookName": {
+            "defaultValue": "plb-start-mde-tasks-based-on-teams-input",
+            "type": "string"
+        },
+        "managed-identity-name" :{
+            "defaultValue": "<managed-identity>",
+            "type": "string"
+        },
+        "tenant-id": {
+            "defaultValue": "<tenant-id>",
+            "type": "string"
+        },
+        "mde-app-registration-id" :{
+            "defaultValue": "<mde-app-registration-id>",
+            "type": "string"
+        },
+        "mde-app-registration-secret" :{
+            "defaultValue": "",
+            "type": "securestring"
+        },
+        "ms-teams-recipient-email": {
+            "defaultValue": "<ms-teams-recipient-email>",
+            "type": "string"
+        },
+        "ms-teams-group-id": {
+            "defaultValue": "<ms-teams-group-id>",
+            "type": "string"
+        },
+        "ms-teams-channel-id":{
+            "defaultValue": "<ms-teams-channel-id>",
+            "type": "string"
+        }
+    },
+    "variables": {
+        "azuresentinel": "[concat('azuresentinel-api-conn-', parameters('playbookName'))]",
+        "wdatp": "[concat('wdatp-api-conn-', parameters('playbookName'))]",
+        "teams": "[concat('teams-api-conn-', parameters('playbookName'))]"
+    },
+    "resources": [
+       {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('azuresentinel')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('azuresentinel')]",
+                "customParameterValues": {},
+                "parameterValueType": "Alternative",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('wdatp')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('wdatp')]",
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/wdatp')]"
+                },
+                "parameterValues": {
+                    "token:clientId": "[parameters('mde-app-registration-id')]",
+                    "token:TenantId": "[parameters('tenant-id')]",
+                    "token:grantType": "client_credentials",
+                    "token:clientSecret": "[parameters('mde-app-registration-secret')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('teams')]",
+            "location": "[resourceGroup().location]",
+            "kind": "V1",
+            "properties": {
+                "displayName": "[variables('teams')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/teams')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('playbookName')]",
+            "location": "[resourceGroup().location]",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('managed-identity-name'))]": {}
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('azuresentinel'))]",
+                "[resourceId('Microsoft.Web/connections', variables('wdatp'))]",
+                "[resourceId('Microsoft.Web/connections', variables('teams'))]"
+                ],
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "Microsoft_Sentinel_incident": {
+                            "type": "ApiConnectionWebhook",
+                            "inputs": {
+                                "body": {
+                                    "callback_url": "@{listCallbackUrl()}"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "path": "/incident-creation"
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Entities_-_Get_Hosts": {
+                            "runAfter": {
+                                "Set_variable_(assignedTo)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "body": "@triggerBody()?['object']?['properties']?['relatedEntities']",
+                                "path": "/entities/host"
+                            }
+                        },
+                        "For_each_1": {
+                            "foreach": "@body('Entities_-_Get_Hosts')?['Hosts']",
+                            "actions": {
+                                "For_each_2": {
+                                    "foreach": "@body('Parse_JSON_(Hosts)')?['Hosts']",
+                                    "actions": {
+                                        "Actions_-_Start_automated_investigation_on_a_machine": {
+                                            "runAfter": {
+                                                "Set_variable_(Hostname)": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['wdatp']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "body": {
+                                                    "Comment": "Start automated investigation  from playbook for Azure Sentinel Incident: @{triggerBody()?['object']?['properties']?['incidentNumber']}"
+                                                },
+                                                "path": "/api/machines/@{encodeURIComponent(items('For_each_2')?['additionalData']?['MdatpDeviceId'])}/startInvestigation"
+                                            }
+                                        },
+                                        "Add_comment_to_incident_(V3)": {
+                                            "runAfter": {
+                                                "Actions_-_Start_automated_investigation_on_a_machine": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "body": {
+                                                    "incidentArmId": "@triggerBody()?['object']?['id']",
+                                                    "message": "<p>The automated investigation was started:<br>\n@{body('Actions_-_Start_automated_investigation_on_a_machine')}</p>"
+                                                },
+                                                "path": "/Incidents/Comment"
+                                            }
+                                        },
+                                        "Post_a_choice_of_options_as_the_Flow_bot_to_a_user": {
+                                            "runAfter": {
+                                                "Add_comment_to_incident_(V3)": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnectionWebhook",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['teams']['connectionId']"
+                                                    }
+                                                },
+                                                "body": {
+                                                    "notificationUrl": "@{listCallbackUrl()}",
+                                                    "body": {
+                                                        "options": [
+                                                            "Isolate machine",
+                                                            "Run antivirus scan",
+                                                            "Remove app execution restriction"
+                                                        ],
+                                                        "recipient": {
+                                                            "to": "@variables('teamsRecipient')",
+                                                            "isAlert": true
+                                                        },
+                                                        "messageBody": "An incident has been generated: @{triggerBody()?['object']?['properties']?['incidentNumber']}\n\nThe incident is based on the following data: \n\n\nIncident title @{triggerBody()?['object']?['properties']?['title']}\n\nSeverity:@{triggerBody()?['object']?['properties']?['severity']}\n\nNumber of Alerts:@{triggerBody()?['object']?['properties']?['additionalData']?['alertsCount']}\n\n\nBy default, an automated investigation has already begun.\n\n\nPlease select the response action on the impacted device(s):\n\n@{items('For_each_2')?['hostName']}",
+                                                        "messageTitle": "SOC Response Action required"
+                                                    }
+                                                },
+                                                "path": "/flowbot/actions/messagewithoptions/recipienttypes/user/$subscriptions"
+                                            }
+                                        },
+                                        "Post_card_in_a_chat_or_channel": {
+                                            "runAfter": {
+                                                "Set_variable_(adaptiveCard)": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "ApiConnection",
+                                            "inputs": {
+                                                "host": {
+                                                    "connection": {
+                                                        "name": "@parameters('$connections')['teams']['connectionId']"
+                                                    }
+                                                },
+                                                "method": "post",
+                                                "body": {
+                                                    "recipient": {
+                                                        "groupId": "[parameters('ms-teams-group-id')]",
+                                                        "channelId": "[parameters('ms-teams-channel-id')]"
+                                                    },
+                                                    "messageBody": "@variables('adaptiveCard')"
+                                                },
+                                                "path": "/v1.0/teams/conversation/adaptivecard/poster/Flow bot/location/@{encodeURIComponent('Channel')}"
+                                            }
+                                        },
+                                        "Set_variable_(Hostname)": {
+                                            "type": "SetVariable",
+                                            "inputs": {
+                                                "name": "hostname",
+                                                "value": "@items('For_each_2')?['additionalData']?['MdatpDeviceId']"
+                                            }
+                                        },
+                                        "Set_variable_(adaptiveCard)": {
+                                            "runAfter": {
+                                                "Switch": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "SetVariable",
+                                            "inputs": {
+                                                "name": "adaptiveCard",
+                                                "value": "{\n    \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n    \"type\": \"AdaptiveCard\",\n    \"version\": \"1.4\",\n    \"body\": [\n        {\n            \"type\": \"TextBlock\",\n            \"size\": \"Large\",\n            \"weight\": \"Bolder\",\n            \"text\": \"SOC Incident Report ID: @{triggerBody()?['object']?['properties']?['incidentNumber']}\"\n        },\n        {\n            \"type\": \"FactSet\",\n            \"facts\": [\n                {\n                    \"title\": \"Incident Title:\",\n                    \"value\": \"@{triggerBody()?['object']?['properties']?['title']}\"\n                },\n                {\n                    \"title\": \"Status:\",\n                    \"value\": \"@{triggerBody()?['object']?['properties']?['status']}\"\n                },\n                {\n                    \"title\": \"Severity:\",\n                    \"value\": \"@{triggerBody()?['object']?['properties']?['severity']}\"\n                },\n                {\n                    \"title\": \"Last activity on:\",\n                    \"value\": \"@{triggerBody()?['object']?['properties']?['lastActivityTimeUtc']}\"\n                },\n                {\n                    \"title\": \"Remediation Task:\",\n                    \"value\": \"@{body('Post_a_choice_of_options_as_the_Flow_bot_to_a_user')['selectedOption']} by @{body('Post_a_choice_of_options_as_the_Flow_bot_to_a_user')?['responder']?['userId']}\"\n                },\n                {\n                    \"title\": \"Comment selected:\",\n                    \"value\": \"@{body('Post_a_choice_of_options_as_the_Flow_bot_to_a_user')?['comments']}\"\n                }\n            ]\n        },\n        {\n            \"type\": \"TextBlock\",\n            \"weight\": \"Bolder\",\n            \"text\": \"Description\"\n        },\n        {\n            \"type\": \"TextBlock\",\n            \"text\": \"Action comment: @{body('Actions_-_Remove_app_execution_restriction')?['requestorComment']}@{body('Actions_-_Isolate_machine')?['requestorComment']}@{body('Actions_-_Run_antivirus_scan')?['requestorComment']}\",\n            \"wrap\": true\n        },\n        {\n            \"type\": \"TextBlock\",\n            \"weight\": \"Bolder\",\n            \"text\": \"Need more info about the incident?\"\n        },\n        {\n            \"type\": \"TextBlock\",\n            \"text\": \"Incident Owner: @{variables('assignedTo')}\",\n            \"wrap\": true\n        }\n    ],\n    \"actions\": [\n        {\n            \"type\": \"Action.OpenUrl\",\n            \"title\": \"Open Incident on Sentinel\",\n            \"url\": \"@{triggerBody()?['object']?['properties']?['incidentUrl']}\"\n        }\n    ]\n}"
+                                            }
+                                        },
+                                        "Switch": {
+                                            "runAfter": {
+                                                "Post_a_choice_of_options_as_the_Flow_bot_to_a_user": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "cases": {
+                                                "Case": {
+                                                    "case": "Isolate machine",
+                                                    "actions": {
+                                                        "Actions_-_Isolate_machine": {
+                                                            "type": "ApiConnection",
+                                                            "inputs": {
+                                                                "host": {
+                                                                    "connection": {
+                                                                        "name": "@parameters('$connections')['wdatp']['connectionId']"
+                                                                    }
+                                                                },
+                                                                "method": "post",
+                                                                "body": {
+                                                                    "Comment": "The device was isolated based on selected option",
+                                                                    "IsolationType": "Full"
+                                                                },
+                                                                "path": "/api/machines/@{encodeURIComponent(items('For_each_2')?['additionalData']?['MdatpDeviceId'])}/isolate"
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                "Case_2": {
+                                                    "case": "Remove app execution restriction",
+                                                    "actions": {
+                                                        "Actions_-_Remove_app_execution_restriction": {
+                                                            "type": "ApiConnection",
+                                                            "inputs": {
+                                                                "host": {
+                                                                    "connection": {
+                                                                        "name": "@parameters('$connections')['wdatp']['connectionId']"
+                                                                    }
+                                                                },
+                                                                "method": "post",
+                                                                "body": {
+                                                                    "Comment": "Remove app exec restriction was triggered based on selected option"
+                                                                },
+                                                                "path": "/api/machines/@{encodeURIComponent(items('For_each_2')?['additionalData']?['MdatpDeviceId'])}/unrestrictCodeExecution"
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                "Case_3": {
+                                                    "case": "Run antivirus scan",
+                                                    "actions": {
+                                                        "Actions_-_Run_antivirus_scan": {
+                                                            "type": "ApiConnection",
+                                                            "inputs": {
+                                                                "host": {
+                                                                    "connection": {
+                                                                        "name": "@parameters('$connections')['wdatp']['connectionId']"
+                                                                    }
+                                                                },
+                                                                "method": "post",
+                                                                "body": {
+                                                                    "Comment": "A Full Antivirus scan was triggered based on selected option",
+                                                                    "ScanType": "Full"
+                                                                },
+                                                                "path": "/api/machines/@{encodeURIComponent(items('For_each_2')?['additionalData']?['MdatpDeviceId'])}/runAntiVirusScan"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "default": {
+                                                "actions": {}
+                                            },
+                                            "expression": "@body('Post_a_choice_of_options_as_the_Flow_bot_to_a_user')['selectedOption']",
+                                            "type": "Switch"
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Parse_JSON_(Hosts)": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Foreach"
+                                },
+                                "Parse_JSON_(Hosts)": {
+                                    "type": "ParseJson",
+                                    "inputs": {
+                                        "content": "@body('Entities_-_Get_Hosts')",
+                                        "schema": {
+                                            "properties": {
+                                                "Hosts": {
+                                                    "items": {
+                                                        "properties": {
+                                                            "Type": {
+                                                                "type": "string"
+                                                            },
+                                                            "additionalData": {
+                                                                "properties": {
+                                                                    "AadDeviceId": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "AvStatus": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "FQDN": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "HealthStatus": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "LastExternalIpAddress": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "LastIpAddress": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "LastSeen": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "MdatpDeviceId": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "OnboardingStatus": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "RiskScore": {
+                                                                        "type": "string"
+                                                                    }
+                                                                },
+                                                                "type": "object"
+                                                            },
+                                                            "dnsDomain": {
+                                                                "type": "string"
+                                                            },
+                                                            "friendlyName": {
+                                                                "type": "string"
+                                                            },
+                                                            "hostName": {
+                                                                "type": "string"
+                                                            },
+                                                            "osFamily": {
+                                                                "type": "string"
+                                                            },
+                                                            "osVersion": {
+                                                                "type": "string"
+                                                            }
+                                                        },
+                                                        "required": [
+                                                            "dnsDomain",
+                                                            "hostName",
+                                                            "osFamily",
+                                                            "osVersion",
+                                                            "additionalData",
+                                                            "friendlyName",
+                                                            "Type"
+                                                        ],
+                                                        "type": "object"
+                                                    },
+                                                    "type": "array"
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "Initialize_(adaptiveCard)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        },
+                        "Get_incident": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "body": {
+                                    "incidentArmId": "@triggerBody()?['object']?['id']"
+                                },
+                                "path": "/Incidents"
+                            }
+                        },
+                        "Initialize_(adaptiveCard)": {
+                            "runAfter": {
+                                "Initialize_variable_(teamsRecipient)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "adaptiveCard",
+                                        "type": "string",
+                                        "value": "\n"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_(assignedTo)": {
+                            "runAfter": {
+                                "Get_incident": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "assignedTo",
+                                        "type": "string",
+                                        "value": "@triggerBody()?['object']?['properties']?['owner']?['assignedTo']"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_(Hostname)": {
+                            "runAfter": {
+                                "Entities_-_Get_Hosts": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "hostname",
+                                        "type": "string"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_variable_(teamsRecipient)": {
+                            "runAfter": {
+                                "Initialize_variable_(Hostname)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "teamsRecipient",
+                                        "type": "string",
+                                        "value": "[parameters('ms-teams-recipient-email')]"
+                                    }
+                                ]
+                            }
+                        },
+                        "Set_variable_(assignedTo)": {
+                            "runAfter": {
+                                "Initialize_variable_(assignedTo)": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "SetVariable",
+                            "inputs": {
+                                "name": "assignedTo",
+                                "value": "@body('Get_incident')?['properties']?['owner']?['assignedTo']"
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azuresentinel": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('azuresentinel'))]",
+                                "connectionName": "[variables('azuresentinel')]",
+                                "connectionProperties": {
+                                    "authentication": {
+                                        "identity": "[concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('managed-identity-name'))]",
+                                        "type": "ManagedServiceIdentity"
+                                    }
+                                },
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                            },
+                            "wdatp": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('wdatp'))]",
+                                "connectionName": "[variables('wdatp')]",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/wdatp')]"
+                            },
+                            "teams": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('teams'))]",
+                                "connectionName": "[variables('teams')]",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/teams')]"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
