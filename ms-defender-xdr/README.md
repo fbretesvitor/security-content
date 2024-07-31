@@ -4,6 +4,12 @@ The current folder intends to hosts scripts to collect info from Cloud Discovery
 The APIs are currently in Preview (July of 2024)
 [More info](https://github.com/microsoft/Microsoft-Defender-for-Cloud-Apps/blob/main/Docs/(Preview)%20Discovered%20Apps%20API%20via%20Graph%20-%20Guide.md)
 
+# Permissions
+For app registrations, the API requires the following permission:
+| API             | Permission                  | Type        | 
+|-----------------|-----------------------------|-------------|
+| Microsoft Graph | CloudApp-Discovery.Read.All | Application |
+
 ###
 Feel free to reach out.
 
