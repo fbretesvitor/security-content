@@ -1,0 +1,24 @@
+// EmailEvents
+let domain = "domain.com";
+source
+| where RecipientDomain == domain
+    or SenderMailFromDomain == domain
+
+// EmailAttachmentInfo
+let domain = "@domain.com";
+source
+| where RecipientEmailAddress endswith domain or SenderFromAddress endswith domain
+
+// EmailPostDeliveryEvents
+let domain = "@domain.com";
+source
+| where RecipientEmailAddress endswith domain
+    or SenderFromAddress endswith domain
+
+// UrlClickEvents
+let domain = "@domain.com";
+source
+| where AccountUpn endswith domain
+
+// EmailUrlInfo
+// No available info about the domain, so can't be filtered out.

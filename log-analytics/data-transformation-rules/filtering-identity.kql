@@ -1,0 +1,14 @@
+## Data Table Transformation
+// SigninLogs
+source
+| where UserPrincipalName endswith "@domain.com"
+
+// AuditLogs
+V1
+source
+| where TargetResources has "\"type\":\"User\""
+| where TargetResources has "@domain.com"
+
+V2
+source
+| where InitiatedBy has "@domain.com"

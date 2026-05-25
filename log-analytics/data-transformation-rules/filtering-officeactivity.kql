@@ -1,0 +1,2 @@
+source
+| where UserId endswith "@domain.com"
