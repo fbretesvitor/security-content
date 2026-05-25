@@ -1,0 +1,14 @@
+// Get info about TOP ingested tables
+Usage
+| where TimeGenerated > ago(3d)
+| summarize DataGB = round(sum(Quantity) / 1024, 2) by DataType
+| order by DataGB desc
+
+Usage
+| where TimeGenerated > ago(3d)
+| summarize DataMB = round(sum(Quantity), 2) by DataType
+| order by DataMB desc
+
+Fortinet_CL
+| where TimeGenerated > ago(3d)
+| summarize Records = count()
